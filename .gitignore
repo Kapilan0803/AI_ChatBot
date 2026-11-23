@@ -1,0 +1,16 @@
+# Environment variables (do not commit secrets)
+.env
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Vector database local storage
+chroma_db/
+*.sqlite3
+
+# OS files
+Thumbs.db
+.DS_Store
