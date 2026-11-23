@@ -1,11 +1,15 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
+
+# Set default user-agent for WebBaseLoader
+os.environ["USER_AGENT"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains import create_retrieval_chain
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 from langchain_community.vectorstores import Chroma
 from langchain_groq import ChatGroq
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -13,6 +17,10 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 load_dotenv()
 
 st.logo("Chatbots-removebg-preview.png")
+
+# ── Helper to format retrieved document chunks ──
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
 
 # ── Cache Embeddings model in RAM across sessions for maximum speed ──
 @st.cache_resource(show_spinner="⚡ Loading fast embedding engine into memory (one-time)...")
@@ -60,13 +68,17 @@ with st.sidebar:
     if api_key_input:
         os.environ["GROQ_API_KEY"] = api_key_input
 
+    if st.button("🗑️ Clear Chat History"):
+        st.session_state["web_messages"] = []
+        st.rerun()
+
 active_key = api_key_input or os.getenv("GROQ_API_KEY", "")
 
 # ── Session state setup ──
 if "web_messages" not in st.session_state:
     st.session_state["web_messages"] = []
-if "web_retrieval_chain" not in st.session_state:
-    st.session_state["web_retrieval_chain"] = None
+if "web_chain" not in st.session_state:
+    st.session_state["web_chain"] = None
 if "web_loaded_url" not in st.session_state:
     st.session_state["web_loaded_url"] = None
 
@@ -84,7 +96,7 @@ with col2:
 if load_btn and url:
     if st.session_state["web_loaded_url"] != url.strip():
         st.session_state["web_loaded_url"] = url.strip()
-        st.session_state["web_retrieval_chain"] = None
+        st.session_state["web_chain"] = None
         st.session_state["web_messages"] = []
 
         with st.spinner("⚡ Fetching and indexing web page..."):
@@ -121,9 +133,15 @@ if load_btn and url:
 Question: {input}"""
                 )
 
-                document_chain = create_stuff_documents_chain(llm, prompt)
                 retriever = vectors.as_retriever(search_kwargs={"k": 3})
-                st.session_state["web_retrieval_chain"] = create_retrieval_chain(retriever, document_chain)
+
+                # Modern LCEL RAG chain
+                st.session_state["web_chain"] = (
+                    {"context": retriever | format_docs, "input": RunnablePassthrough()}
+                    | prompt
+                    | llm
+                    | StrOutputParser()
+                )
                 st.success(f"✅ Ready! Indexed `{url.strip()}` ({len(final_documents)} chunks).")
 
             except Exception as e:
@@ -134,7 +152,7 @@ for msg in st.session_state["web_messages"]:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # Query input
-if st.session_state["web_retrieval_chain"]:
+if st.session_state["web_chain"]:
     if user_query := st.chat_input("Ask a question about the webpage..."):
         st.session_state["web_messages"].append({"role": "user", "content": user_query})
         st.chat_message("user").write(user_query)
@@ -145,14 +163,9 @@ if st.session_state["web_retrieval_chain"]:
         else:
             with st.chat_message("assistant"):
                 try:
-                    # Stream chunks in real-time
-                    def stream_web():
-                        chain = st.session_state["web_retrieval_chain"]
-                        for chunk in chain.stream({"input": user_query}):
-                            if "answer" in chunk:
-                                yield chunk["answer"]
-
-                    answer = st.write_stream(stream_web())
+                    # Stream tokens in real-time
+                    chain = st.session_state["web_chain"]
+                    answer = st.write_stream(chain.stream(user_query))
                     st.session_state["web_messages"].append({"role": "assistant", "content": answer})
                 except Exception as e:
                     st.error(f"Error: {e}")

@@ -2,11 +2,12 @@ import streamlit as st
 import os
 import tempfile
 from dotenv import load_dotenv
+
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains import create_retrieval_chain
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 from langchain_community.vectorstores import Chroma
 from langchain_groq import ChatGroq
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -14,6 +15,10 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 load_dotenv()
 
 st.logo("Chatbots-removebg-preview.png")
+
+# ── Helper to format retrieved document chunks ──
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
 
 # ── Cache Embeddings model in RAM across sessions for maximum speed ──
 @st.cache_resource(show_spinner="⚡ Loading fast embedding engine into memory (one-time)...")
@@ -61,13 +66,17 @@ with st.sidebar:
     if api_key_input:
         os.environ["GROQ_API_KEY"] = api_key_input
 
+    if st.button("🗑️ Clear Chat History"):
+        st.session_state["rag_messages"] = []
+        st.rerun()
+
 active_key = api_key_input or os.getenv("GROQ_API_KEY", "")
 
 # ── Session state setup ──
 if "rag_messages" not in st.session_state:
     st.session_state["rag_messages"] = []
-if "rag_retrieval_chain" not in st.session_state:
-    st.session_state["rag_retrieval_chain"] = None
+if "rag_chain" not in st.session_state:
+    st.session_state["rag_chain"] = None
 if "rag_file_id" not in st.session_state:
     st.session_state["rag_file_id"] = None
 
@@ -80,7 +89,7 @@ if uploaded_file:
     file_id = f"{uploaded_file.name}_{uploaded_file.size}"
     if st.session_state["rag_file_id"] != file_id:
         st.session_state["rag_file_id"] = file_id
-        st.session_state["rag_retrieval_chain"] = None
+        st.session_state["rag_chain"] = None
         st.session_state["rag_messages"] = []
 
         with st.spinner("⚡ Fast indexing document chunks..."):
@@ -126,9 +135,15 @@ if uploaded_file:
 Question: {input}"""
                 )
 
-                document_chain = create_stuff_documents_chain(llm, prompt)
                 retriever = vectors.as_retriever(search_kwargs={"k": 3})
-                st.session_state["rag_retrieval_chain"] = create_retrieval_chain(retriever, document_chain)
+
+                # Modern LCEL RAG chain
+                st.session_state["rag_chain"] = (
+                    {"context": retriever | format_docs, "input": RunnablePassthrough()}
+                    | prompt
+                    | llm
+                    | StrOutputParser()
+                )
                 st.success(f"✅ Ready! Indexed {len(final_documents)} chunks from `{uploaded_file.name}`.")
 
             except Exception as e:
@@ -142,7 +157,7 @@ for msg in st.session_state["rag_messages"]:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # Query input
-if st.session_state["rag_retrieval_chain"]:
+if st.session_state["rag_chain"]:
     if user_query := st.chat_input("Ask a question about your document..."):
         st.session_state["rag_messages"].append({"role": "user", "content": user_query})
         st.chat_message("user").write(user_query)
@@ -153,14 +168,9 @@ if st.session_state["rag_retrieval_chain"]:
         else:
             with st.chat_message("assistant"):
                 try:
-                    # Stream chunks in real-time
-                    def stream_rag():
-                        chain = st.session_state["rag_retrieval_chain"]
-                        for chunk in chain.stream({"input": user_query}):
-                            if "answer" in chunk:
-                                yield chunk["answer"]
-
-                    answer = st.write_stream(stream_rag())
+                    # Stream tokens in real-time
+                    chain = st.session_state["rag_chain"]
+                    answer = st.write_stream(chain.stream(user_query))
                     st.session_state["rag_messages"].append({"role": "assistant", "content": answer})
                 except Exception as e:
                     st.error(f"Error: {e}")
