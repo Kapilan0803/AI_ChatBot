@@ -52,10 +52,6 @@ copy .env.example .env          # Windows  (cp .env.example .env on macOS / Linu
 
 # 4. run
 streamlit run main.py
-```
-
-You can skip the `.env` file and paste the key into the sidebar of the running app instead.
-The first RAG run downloads the embedding model (~90 MB) once.
 
 ---
 
@@ -73,18 +69,6 @@ ai-chatbot-suite/
 ├── .env.example
 └── Chatbots-removebg-preview.png   # logo (optional)
 ```
-
----
-
-## Troubleshooting
-- **"free-tier limit reached"** – wait a minute, choose another model, or switch provider.
-- **"rejected the API key"** – paste the whole key for the provider selected in the sidebar (each provider has its own key).
-- **"model is not available"** – the model was retired or renamed; pick another one in the sidebar.
-- **"Cannot reach Ollama"** – install and start Ollama, then run `ollama pull llama3.2`.
-- **"No readable text found"** – the PDF is scanned (image-only) and needs OCR, or the web page is rendered by JavaScript / blocks bots.
-- **Answers say "not found in the provided content"** – the answer really isn't in the uploaded file/page; the bot only uses that content.
-
----
 
 ## Contributing
 1. Fork the repository.
