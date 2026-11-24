@@ -88,9 +88,10 @@ st.divider()
 st.markdown(
     """
     <div class="social-links">
-        <a href="https://www.linkedin.com/in/kapilan-p-c-361188280/" target="_blank">LinkedIn</a>
-        <a href="https://github.com/Kapilan0803" target="_blank">GitHub</a>
+        <a href="https://www.linkedin.com/******************" target="_blank">LinkedIn</a>
+        <a href="https://github.com/************" target="_blank">GitHub</a>
     </div>
     """,
     unsafe_allow_html=True,
 )
+
