@@ -1,57 +1,60 @@
+import uuid
+
 import streamlit as st
-import os
-from dotenv import load_dotenv
-from Llama import Llama_stream
 
-load_dotenv()
+from llm import PROVIDERS, chat_stream, clear_history
+from utils import (
+    explain_error,
+    get_api_key,
+    get_model,
+    get_provider,
+    key_missing_message,
+    provider_ready,
+)
 
-# Streamlit app setup
+WELCOME = {"role": "assistant", "content": "Hello buddy! How can I help you today?"}
+
 st.title("💬🤖 ConvoAI")
-st.caption("🚀 Lightning-fast conversation powered by Llama 3.1 & Groq")
-st.logo("Chatbots-removebg-preview.png")
+st.caption(f"🚀 Fast conversation powered by {PROVIDERS[get_provider()]['label']} · {get_model()}")
 
-# Sidebar API Key input for instant configuration
-env_key = os.getenv("GROQ_API_KEY", "")
-if env_key == "your_api_key":
-    env_key = ""
+# ── Session state ──
+# Each browser session gets its own id, so conversations never mix between users.
+if "chat_session_id" not in st.session_state:
+    st.session_state["chat_session_id"] = uuid.uuid4().hex
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [dict(WELCOME)]
 
 with st.sidebar:
-    st.subheader("⚙️ Settings")
-    api_key_input = st.text_input(
-        "Groq API Key",
-        value=env_key,
-        type="password",
-        help="Get your free API key at https://console.groq.com",
-    )
-    if api_key_input:
-        os.environ["GROQ_API_KEY"] = api_key_input
-
-    if st.button("🗑️ Clear Chat History"):
-        st.session_state["messages"] = [{"role": "assistant", "content": "Hello buddy! How can I help you today?"}]
+    if st.button("🗑️ Clear Chat History", key="clear_chat"):
+        # Clear the model's memory too, not just what is shown on screen.
+        clear_history(st.session_state["chat_session_id"])
+        st.session_state["messages"] = [dict(WELCOME)]
         st.rerun()
 
-if "messages" not in st.session_state:
-    st.session_state["messages"] = [{"role": "assistant", "content": "Hello buddy! How can I help you today?"}]
-
-# Display chat history
-for msg in st.session_state.messages:
+# ── Display chat history ──
+for msg in st.session_state["messages"]:
     st.chat_message(msg["role"]).write(msg["content"])
 
-# User input
+# ── User input ──
 if prompt_text := st.chat_input("Ask me anything..."):
-    st.session_state.messages.append({"role": "user", "content": prompt_text})
     st.chat_message("user").write(prompt_text)
 
-    active_key = api_key_input or os.getenv("GROQ_API_KEY", "")
-    if not active_key or active_key == "your_api_key":
-        with st.chat_message("assistant"):
-            st.error("⚠️ Please enter a valid **Groq API Key** in the sidebar or in `.env` to chat.")
-    else:
-        with st.chat_message("assistant"):
+    with st.chat_message("assistant"):
+        if not provider_ready():
+            st.error(key_missing_message())
+        else:
             try:
-                # Real-time token streaming - renders immediately with zero lag!
-                stream_generator = Llama_stream(prompt_text, api_key=active_key)
-                full_response = st.write_stream(stream_generator)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                reply = st.write_stream(
+                    chat_stream(
+                        prompt_text,
+                        session_id=st.session_state["chat_session_id"],
+                        provider=get_provider(),
+                        api_key=get_api_key(),
+                        model=get_model(),
+                    )
+                )
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(explain_error(e))
+            else:
+                st.session_state["messages"].append({"role": "user", "content": prompt_text})
+                st.session_state["messages"].append({"role": "assistant", "content": reply})

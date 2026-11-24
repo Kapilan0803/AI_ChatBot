@@ -1,20 +1,9 @@
 import streamlit as st
 
-# Page configuration
-st.set_page_config(
-    page_title="AI Chatbot Suite",
-    page_icon="🤖",
-    layout="centered"
-)
-
-# Custom CSS for premium design
+# Custom CSS for the home page
 st.markdown(
     """
     <style>
-    body {
-        background-color: black;
-        color: black;
-    }
     .premium-header {
         color: #c45b10;
         font-size: 36px;
@@ -40,12 +29,6 @@ st.markdown(
         font-family: cursive;
         line-height: 2.0;
     }
-    .center-content {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        margin-top: 20px;
-    }
     .social-links {
         margin-top: 30px;
         text-align: center;
@@ -57,30 +40,31 @@ st.markdown(
         margin: 0 15px;
     }
     .social-links a:hover {
-        color: white;
+        color: #e30780;
     }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
-
-st.logo("Chatbots-removebg-preview.png")
 
 # Premium header title
 st.markdown('<div class="premium-header">AI Chatbot Suite</div>', unsafe_allow_html=True)
 
 # Subtitle with custom color
-st.markdown('<div class="subtitle">Conversational and RAG-based AI Solutions</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="subtitle">Conversational, Document and Web-based AI Solutions</div>',
+    unsafe_allow_html=True,
+)
 
 # Brief description
 st.markdown(
     '<div class="description">Welcome to the AI Chatbot Suite, an elite platform at the '
-    'forefront of conversational AI innovation. Whether you desire effortless, human-like '
-    'interactions through our cutting-edge Conversational Chatbot, data-enriched responses '
-    'driven by our advanced Retrieval-Augmented Generation (RAG)-based Chatbot, or web-based '
-    'knowledge extraction, we are here to redefine your digital experience and elevate '
-    'engagement to new heights.</div>',
-    unsafe_allow_html=True
+    "forefront of conversational AI innovation. Whether you desire effortless, human-like "
+    "interactions through our cutting-edge Conversational Chatbot, data-enriched responses "
+    "driven by our advanced Retrieval-Augmented Generation (RAG)-based Chatbot, or web-based "
+    "knowledge extraction, we are here to redefine your digital experience and elevate "
+    "engagement to new heights.</div>",
+    unsafe_allow_html=True,
 )
 
 st.markdown("")
@@ -89,13 +73,15 @@ st.markdown("")
 col1, col2, col3 = st.columns(3)
 with col1:
     st.markdown("### 💬 ConvoAI")
-    st.write("Natural conversational chatbot powered by Llama 3.1 via Groq.")
+    st.write("Natural conversational chatbot powered by Google Gemini (free), Groq or local Ollama models.")
 with col2:
     st.markdown("### 📚 RAG Chatbot")
     st.write("Upload PDFs and ask questions — answers grounded in your documents.")
 with col3:
     st.markdown("### 🌐 Web RAG")
     st.write("Enter any URL and chat about its content instantly.")
+
+st.info("👈 Pick a tool from the sidebar. Choose an AI provider and add its free API key in the sidebar settings (Ollama needs no key).")
 
 st.divider()
 
@@ -106,5 +92,5 @@ st.markdown(
         <a href="https://github.com/Kapilan0803" target="_blank">GitHub</a>
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )

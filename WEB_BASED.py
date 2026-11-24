@@ -1,35 +1,14 @@
 import streamlit as st
-import os
-from dotenv import load_dotenv
 
-# Set default user-agent for WebBaseLoader
-os.environ["USER_AGENT"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-from langchain_community.document_loaders import WebBaseLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
-from langchain_community.vectorstores import Chroma
-from langchain_groq import ChatGroq
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
-load_dotenv()
-
-st.logo("Chatbots-removebg-preview.png")
-
-# ── Helper to format retrieved document chunks ──
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
-
-# ── Cache Embeddings model in RAM across sessions for maximum speed ──
-@st.cache_resource(show_spinner="⚡ Loading fast embedding engine into memory (one-time)...")
-def get_embedding_model():
-    return HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
+from utils import (
+    build_retriever,
+    explain_error,
+    key_missing_message,
+    load_web_page,
+    normalize_url,
+    provider_ready,
+    stream_rag_answer,
+)
 
 # Custom CSS for styling
 st.markdown(
@@ -52,122 +31,74 @@ st.markdown(
 
 st.markdown('<h1 class="title">🌐✨ WEB-Knowledge Chatbot</h1>', unsafe_allow_html=True)
 
-# Sidebar API Key & Settings
-env_key = os.getenv("GROQ_API_KEY", "")
-if env_key == "your_api_key":
-    env_key = ""
+# ── Session state ──
+st.session_state.setdefault("web_messages", [])
+st.session_state.setdefault("web_retriever", None)
+st.session_state.setdefault("web_loaded_url", None)
 
 with st.sidebar:
-    st.subheader("⚙️ Settings")
-    api_key_input = st.text_input(
-        "Groq API Key",
-        value=env_key,
-        type="password",
-        help="Get your free key at https://console.groq.com",
-    )
-    if api_key_input:
-        os.environ["GROQ_API_KEY"] = api_key_input
-
-    if st.button("🗑️ Clear Chat History"):
+    if st.button("🗑️ Clear Chat History", key="clear_web"):
         st.session_state["web_messages"] = []
         st.rerun()
 
-active_key = api_key_input or os.getenv("GROQ_API_KEY", "")
-
-# ── Session state setup ──
-if "web_messages" not in st.session_state:
-    st.session_state["web_messages"] = []
-if "web_chain" not in st.session_state:
-    st.session_state["web_chain"] = None
-if "web_loaded_url" not in st.session_state:
-    st.session_state["web_loaded_url"] = None
-
-# Input for website URL
+# ── Input for website URL ──
 col1, col2 = st.columns([4, 1])
 with col1:
-    url = st.text_input(
+    url_input = st.text_input(
         "Enter a website URL to extract knowledge:",
         placeholder="e.g., https://en.wikipedia.org/wiki/Artificial_intelligence",
         label_visibility="collapsed",
     )
 with col2:
-    load_btn = st.button("🚀 Load URL", use_container_width=True)
+    load_btn = st.button("🚀 Load URL")
+
+url = normalize_url(url_input)
 
 if load_btn and url:
-    if st.session_state["web_loaded_url"] != url.strip():
-        st.session_state["web_loaded_url"] = url.strip()
-        st.session_state["web_chain"] = None
-        st.session_state["web_messages"] = []
-
-        with st.spinner("⚡ Fetching and indexing web page..."):
-            try:
-                loader = WebBaseLoader(url.strip())
-                docs = loader.load()
-
-                if not docs or not docs[0].page_content.strip():
-                    st.error("Could not extract readable text from this URL.")
-                    st.stop()
-
-                # Optimized chunking for speed
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-                final_documents = text_splitter.split_documents(docs[:50])
-
-                # Cached embedding model
-                embeddings = get_embedding_model()
-
-                # Vector store
-                vectors = Chroma.from_documents(final_documents, embeddings)
-
-                llm = ChatGroq(
-                    groq_api_key=active_key if active_key and active_key != "your_api_key" else "dummy",
-                    model_name="llama-3.1-8b-instant",
-                    streaming=True,
-                    temperature=0.2,
+    with st.spinner("⚡ Fetching and indexing web page..."):
+        try:
+            docs = load_web_page(url)
+            if not docs:
+                raise ValueError(
+                    "Could not extract readable text from this page "
+                    "(it may be rendered by JavaScript or blocked for bots)."
                 )
+            retriever, n_chunks = build_retriever(docs)
+        except Exception as e:
+            # Reset, so the same URL can be retried and an old index is never reused by mistake.
+            st.session_state["web_retriever"] = None
+            st.session_state["web_loaded_url"] = None
+            st.error(f"Error loading URL: {e}")
+        else:
+            st.session_state["web_retriever"] = retriever
+            st.session_state["web_loaded_url"] = url  # only after success
+            st.session_state["web_messages"] = []
+            st.success(f"✅ Ready! Indexed `{url}` ({n_chunks} chunks).")
+elif load_btn:
+    st.warning("Please enter a URL first.")
+elif st.session_state["web_retriever"] is not None:
+    st.caption(f"🌐 Active page: `{st.session_state['web_loaded_url']}`")
 
-                prompt = ChatPromptTemplate.from_template(
-                    """Answer the question based only on the following webpage context. Be concise and accurate.
-<context>
-{context}
-</context>
-Question: {input}"""
-                )
-
-                retriever = vectors.as_retriever(search_kwargs={"k": 3})
-
-                # Modern LCEL RAG chain
-                st.session_state["web_chain"] = (
-                    {"context": retriever | format_docs, "input": RunnablePassthrough()}
-                    | prompt
-                    | llm
-                    | StrOutputParser()
-                )
-                st.success(f"✅ Ready! Indexed `{url.strip()}` ({len(final_documents)} chunks).")
-
-            except Exception as e:
-                st.error(f"Error loading URL: {e}")
-
-# Display existing chat history
+# ── Display existing chat history ──
 for msg in st.session_state["web_messages"]:
     st.chat_message(msg["role"]).write(msg["content"])
 
-# Query input
-if st.session_state["web_chain"]:
+# ── Query input ──
+if st.session_state["web_retriever"] is not None:
     if user_query := st.chat_input("Ask a question about the webpage..."):
-        st.session_state["web_messages"].append({"role": "user", "content": user_query})
         st.chat_message("user").write(user_query)
-
-        if not active_key or active_key == "your_api_key":
-            with st.chat_message("assistant"):
-                st.error("⚠️ Please provide a valid Groq API Key in the sidebar.")
-        else:
-            with st.chat_message("assistant"):
+        with st.chat_message("assistant"):
+            if not provider_ready():
+                st.error(key_missing_message())
+            else:
                 try:
-                    # Stream tokens in real-time
-                    chain = st.session_state["web_chain"]
-                    answer = st.write_stream(chain.stream(user_query))
-                    st.session_state["web_messages"].append({"role": "assistant", "content": answer})
+                    answer = st.write_stream(
+                        stream_rag_answer(st.session_state["web_retriever"], user_query)
+                    )
                 except Exception as e:
-                    st.error(f"Error: {e}")
-elif not url:
+                    st.error(explain_error(e))
+                else:
+                    st.session_state["web_messages"].append({"role": "user", "content": user_query})
+                    st.session_state["web_messages"].append({"role": "assistant", "content": answer})
+else:
     st.info("👆 Enter a URL above and click **Load URL** to chat with any web page.")
